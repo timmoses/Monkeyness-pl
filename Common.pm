@@ -1,5 +1,4 @@
-package MonkeynessPl::Common;
-$VERSION = '8.0';
+package MonkeynessPl::Common 8.0;
 
 =head1 NAME
 
@@ -13,6 +12,7 @@ Placeholder until I can add the old code here.
 
 =cut
 
+use v5.012;
 use strict;
 use utf8;
 use constant TRUE => 1;
@@ -27,7 +27,7 @@ require Exporter;
 our @ISA = qw(Exporter);
 our @EXPORT = qw(getAnswer parseJSON makeJSON
 	isBoolean isText isJSON isPosInt isNumber isOrdinal isArray isArrayWithContent isHash isHashWithContent isHashKey isArrayHash isArrayHashWithContent isObject toArray byAny
-	joinText percent
+	joinText camel_case kebab_case snake_case convertToName percent
 	generatePassword
 	getFilenameUTCMinute getFilenameUTCHour getFilenameUTCDate convertArraysToCSV readFileList readFile writeFile
 	maxLength printObject convertObjectToString isPerson getTermColors makeColor bold printBold mark
@@ -209,11 +209,12 @@ Started with a simple number to text comparison, then it got out of hand. If the
 		# Crop digits
 		if ($value =~ /\./) {
 			# Count digits before decimal point
-			my $pre;
+			my $pre = '';
 			if ($value =~ /\d\./) { ($pre) = $value =~ /\b(\d+)(?:\.|\b)/; }
 			else { $value =~ s/\./0\./; }
 			# Count digits after decimal point
 			my ($post) = $value =~ /\.(\d+)\b/;
+			$post ||= '';
 			if ((length($pre) + length($post)) > 15) {
 				# Crop zeros
 				my $target = 15 - length($pre);
@@ -226,12 +227,14 @@ Started with a simple number to text comparison, then it got out of hand. If the
 		}
 		# Strip trailing zeros
 		$value =~ s/(\.\d*?)0+\b/$1/;
+		no warnings 'numeric';
 		if (($value+0) eq $value) {
 			my $inRange = TRUE;
 			if (defined($min) && ($value < $min)) { undef $inRange; }
 			if (defined($max) && ($value > $max)) { undef $inRange; }
 			return $inRange;
 		}
+		use warnings 'numeric';
 	}
 	return undef;
 }
@@ -463,7 +466,9 @@ Sorts on one or more fields in an array of arrays, hashes, or values.
 			elsif (!isNumber($a1) && isNumber($b1)) { return 1; }
 		}
 		# Handle numbers
+		no warnings 'numeric';
 		if ($a1 <=> $b1) { return $a1 <=> $b1; }
+		use warnings 'numeric';
 		# Handle undefineds and blanks
 		my $comp = $a1 cmp $b1;
 		# Handle all others in a Unicode friendly way
@@ -493,6 +498,27 @@ sub joinText {
 	return $string;
 }
 
+sub camel_case {
+	my $text = lc(shift);
+	$text =~ s/[^a-z0-9]+([a-z])/\u$a/g;
+	$text =~ s/[^a-z0-9]+//g;
+	return $text;
+}
+
+sub kebab_case {
+	my $text = lc(shift);
+	$text =~ s/[^a-z0-9]+/-/g;
+	$text =~ s/--+/-/g;
+	return $text;
+}
+
+sub snake_case {
+	my $text = lc(shift);
+	$text =~ s/[^a-z0-9]+/_/g;
+	$text =~ s/__+/_/g;
+	return $text;
+}
+
 sub percent {
 	my $number = shift || return;
 	isNumber($number) || return;
@@ -506,18 +532,38 @@ sub percent {
 
 
 sub generatePassword {
-# my $password = generatePassword();
-	my $option = shift;
-	my $length = 32;
-	if (isPosInt($option)) {
-		$length = $option;
-		$option = shift;
-	}
+#=====================================================
+
+=head2 B<generatePassword>
+
+ my $password = generatePassword($options);
+ $options = {
+ 	charset	=> 'default' || 'alpha' || 'letters' || 'numeric' || 'lower' || 'upper' || 'blank',	# defaults to 'default'
+ 	length	=> $lengthOfPassword	# defaults to 32
+ }
+ 
+=cut
+#=====================================================
+	my $defaultOption = shift;
+	my $options = shift;
+	if (isHash($defaultOption)) { $options = $defaultOption; }
+	if (!isHash($options)) { $options = {}; }
+	
+	if (isPosInt($defaultOption)) { $options->{length} = $defaultOption; }
+	elsif (isText($defaultOption)) { $options->{charset} = $defaultOption; }
+	$options->{length} ||= 32;
+	$options->{charset} ||= 'default';
+	if ($options->{charset} eq 'blank') { return; }
+	
 	my @chars = ('a'..'z', 'A'..'Z', 0..9, '`', '~', '!', '@', '#', '$', '^', '&', '*', '(', ')', '-', '_', '=', '+', '[', '{', ']', '}', '|', ';', ',', '<', '.', '>', '/', '?');
-	if ($option eq 'alpha') { @chars = ('a'..'z', 'A'..'Z', 0..9); }
+	if ($options->{charset} eq 'alpha') { @chars = ('a'..'z', 'A'..'Z', 0..9); }
+	elsif ($options->{charset} eq 'letters') { @chars = ('a'..'z', 'A'..'Z'); }
+	elsif ($options->{charset} eq 'numeric') { @chars = (0..9); }
+	elsif ($options->{charset} eq 'lower') { @chars = ('a'..'z'); }
+	elsif ($options->{charset} eq 'upper') { @chars = ('A'..'Z'); }
 	
 	my $pass;
-	for (my $i = 0; $i < 32; $i++) {
+	for (my $i = 0; $i < $options->{length}; $i++) {
 		$pass .= $chars[int(rand(@chars))];
 	}
 	return $pass;
@@ -717,8 +763,8 @@ sub printObject {
 =cut
 #=====================================================
 	my $object = shift;
-	my $label = shift;
-	my $indent = shift;
+	my $label = shift || '';
+	my $indent = shift || 0;
 	
 	if ($label) { $label = makeColor($label, 'bold'); }
 	my $string = convertObjectToString($object);
@@ -966,13 +1012,20 @@ sub printBold {
 	print makeColor(shift, 'bold');
 }
 
+sub sayBold {
+	print makeColor(shift, 'bold') . "\n";
+}
+
 sub mark {
 	my $label = shift;
 	if ($label) { $label .= ' '; }
+	
 	my @returns = caller(1);
 	my $location = "$returns[3] - Line $returns[2]";
 	if (!@returns) { @returns = caller(0); $location = "$returns[1] - Line $returns[2]"; }
-	print makeColor(' ' . $MonkeynessPl::Common::markCounter++ . ' ', ['bold', 'inverse']) . 
+	
+	state $counter = 0;
+	print makeColor(' ' . $counter++ . ' ', ['bold', 'inverse']) . 
 		bold(" ${label}===> $location") . "\n";
 }
 
